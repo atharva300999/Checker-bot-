@@ -7,4 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD python test_bot.py
+RUN mkdir -p data
+
+EXPOSE 8080
+
+CMD gunicorn web_server:app --bind 0.0.0.0:$PORT --timeout 120 & python bot.py

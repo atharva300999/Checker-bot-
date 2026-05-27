@@ -4,12 +4,27 @@ import io
 import csv
 import datetime
 import os
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 import config
 from database import Database
 from checker import CrunchyrollChecker
+
+# ===== DELETE WEBHOOK TO FIX CONFLICT =====
+print("🔄 Cleaning up old webhooks...")
+try:
+    webhook_url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/deleteWebhook"
+    response = requests.get(webhook_url, timeout=10)
+    print(f"✅ Webhook deleted: {response.json()}")
+except Exception as e:
+    print(f"⚠️ Webhook cleanup: {e}")
+# ==========================================
+
+print("🚀 LOADING BOT...")
+print(f"🔑 Bot Token exists: {bool(config.BOT_TOKEN)}")
+print(f"👑 Admins: {config.ADMIN_IDS}")
 
 db = Database()
 os.makedirs("data/exports", exist_ok=True)
@@ -66,10 +81,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id in config.ADMIN_IDS:
         db.make_admin(user.id)
     
-    welcome_msg = f"""
+    welcome_msg = """
 ╔══════════════════════════════════════╗
 ║   🎬 CRUNCHYROLL CHECKER BOT v2.0   ║
-║   Developed by: @iam_esh            ║
 ╚══════════════════════════════════════╝
 
 ✨ **FEATURES:**
@@ -87,16 +101,10 @@ Click the CHECK CRUNCHYROLL button and upload a .txt file
 email:password
 one per line
 
-🎯 **You'll get premium accounts with plan details!**
-
-Welcome {user.first_name}! 👋
+Welcome! 👋
 """
     
-    await update.message.reply_text(
-        welcome_msg,
-        reply_markup=main_menu(user.id),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(welcome_msg, reply_markup=main_menu(user.id), parse_mode="Markdown")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -106,39 +114,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     
     if db.is_banned(user_id) and data not in ["support", "help"]:
-        await query.edit_message_text(
-            "❌ YOU ARE BANNED FROM USING THIS BOT!\n\nContact @iam_esh for help.",
-            reply_markup=back_button()
-        )
+        await query.edit_message_text("❌ YOU ARE BANNED!", reply_markup=back_button())
         return
-    
-    # ========== MAIN MENU ==========
     
     if data == "back_to_main":
         await query.edit_message_text("Main Menu:", reply_markup=main_menu(user_id))
     
     elif data == "check_crunchyroll":
         await query.edit_message_text(
-            "📤 **UPLOAD YOUR COMBO FILE**\n\n"
-            "Send a `.txt` file with accounts in format:\n"
-            "`email:password`\n\n"
-            "One account per line.\n"
-            "Maximum file size: 10MB\n\n"
-            "Click BACK to cancel.",
+            "📤 **UPLOAD YOUR COMBO FILE**\n\nSend a .txt file with email:password format",
             parse_mode="Markdown",
             reply_markup=back_button()
         )
         context.user_data['waiting_for_file'] = True
     
     elif data == "hotmail_checker":
-        await query.edit_message_text(
-            "📧 **HOTMAIL CHECKER**\n\n"
-            "🚧 COMING SOON! 🚧\n\n"
-            "This feature is under development.\n"
-            "Follow @iam_esh for updates.",
-            parse_mode="Markdown",
-            reply_markup=back_button()
-        )
+        await query.edit_message_text("📧 **HOTMAIL CHECKER**\n\n🚧 COMING SOON!", parse_mode="Markdown", reply_markup=back_button())
     
     elif data == "my_stats":
         user_data = db.get_user(user_id)
@@ -168,37 +159,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "help":
         help_text = """
-❓ **HOW TO USE THIS BOT**
+❓ **HOW TO USE**
 
 1️⃣ Click CHECK CRUNCHYROLL button
-2️⃣ Upload a .txt file (email:password format)
-3️⃣ Wait for checking to complete
+2️⃣ Upload .txt file (email:password format)
+3️⃣ Wait for checking
 4️⃣ Download CSV with valid accounts
 
-**TIPS:**
-• Use proxies to avoid rate limits
-• Premium accounts show plan details
-
-**SUPPORT:** @iam_esh
+**SUPPORT:** Contact @admin
 """
         await query.edit_message_text(help_text, parse_mode="Markdown", reply_markup=back_button())
     
     elif data == "support":
-        support_text = """
-📞 **SUPPORT**
-
-👨‍💻 Developer: @iam_esh
-📧 Telegram: @iam_esh
-
-**REPORT ISSUES:**
-• Bot not working? Contact me
-• Feature requests? Let me know
-
-We respond within 24 hours!
-"""
-        await query.edit_message_text(support_text, parse_mode="Markdown", reply_markup=back_button())
-    
-    # ========== ADMIN PANEL ==========
+        support_text = "📞 Contact your bot administrator for support."
+        await query.edit_message_text(support_text, reply_markup=back_button())
     
     elif data == "admin_panel" and user_id in config.ADMIN_IDS:
         await query.edit_message_text("👑 **ADMIN PANEL**", parse_mode="Markdown", reply_markup=admin_panel_menu())
@@ -212,81 +186,50 @@ We respond within 24 hours!
 ├─ 📈 Total checks: {stats['total_checks']}
 ├─ 🎯 Total hits: {stats['total_hits']}
 ├─ 📊 Hit rate: {stats['hit_rate']:.2f}%
-├─ 🔥 Active today: {stats['active_today']}
-└─ ⏰ Last update: {datetime.datetime.now().strftime('%H:%M:%S')}
+└─ 🔥 Active today: {stats['active_today']}
 """
         await query.edit_message_text(stats_text, parse_mode="Markdown", reply_markup=admin_panel_menu())
     
     elif data == "admin_users" and user_id in config.ADMIN_IDS:
         users = db.get_all_users()
         users_text = "👥 **ALL USERS**\n\n"
-        for user in users[:30]:
+        for user in users[:20]:
             status = "🚫 BANNED" if user[5] else "✅ ACTIVE"
             users_text += f"🆔 `{user[0]}`\n   ├─ {user[1] or 'No username'}\n   ├─ Checks: {user[3]}\n   ├─ Hits: {user[4]}\n   └─ {status}\n\n"
-        if len(users) > 30:
-            users_text += f"\n... and {len(users) - 30} more"
         await query.edit_message_text(users_text, parse_mode="Markdown", reply_markup=admin_panel_menu())
     
-    elif data == "admin_broadcast" and user_id in config.ADMIN_IDS:
-        await query.edit_message_text(
-            "📢 **BROADCAST MODE**\n\nSend me the message to send to ALL users.\n\nSend /cancel to cancel.",
-            parse_mode="Markdown",
-            reply_markup=admin_panel_menu()
-        )
-        context.user_data['broadcast_mode'] = True
-    
     elif data == "admin_proxies" and user_id in config.ADMIN_IDS:
-        await query.edit_message_text(
-            "🔌 **PROXY MANAGEMENT**\n\nFormat: `ip:port` or `ip:port:user:pass`",
-            parse_mode="Markdown",
-            reply_markup=proxy_menu()
-        )
-    
-    elif data == "admin_ban" and user_id in config.ADMIN_IDS:
-        await query.edit_message_text(
-            "🚫 **BAN USER**\n\nSend the user ID to ban.\nExample: `6820734853`\n\nSend /cancel to cancel.",
-            parse_mode="Markdown",
-            reply_markup=admin_panel_menu()
-        )
-        context.user_data['ban_mode'] = True
-    
-    elif data == "admin_unban" and user_id in config.ADMIN_IDS:
-        await query.edit_message_text(
-            "✅ **UNBAN USER**\n\nSend the user ID to unban.\nExample: `6820734853`\n\nSend /cancel to cancel.",
-            parse_mode="Markdown",
-            reply_markup=admin_panel_menu()
-        )
-        context.user_data['unban_mode'] = True
-    
-    # ========== PROXY MANAGEMENT ==========
+        await query.edit_message_text("🔌 **PROXY MANAGEMENT**\n\nFormat: ip:port or ip:port:user:pass", reply_markup=proxy_menu())
     
     elif data == "proxy_add" and user_id in config.ADMIN_IDS:
-        await query.edit_message_text(
-            "➕ **ADD PROXY**\n\nSend proxy in format:\n`ip:port` or `ip:port:user:pass`\n\nSend /cancel to cancel.",
-            parse_mode="Markdown",
-            reply_markup=proxy_menu()
-        )
+        await query.edit_message_text("➕ Send proxy (ip:port or ip:port:user:pass):", reply_markup=proxy_menu())
         context.user_data['add_proxy_mode'] = True
     
     elif data == "proxy_list" and user_id in config.ADMIN_IDS:
         proxies = db.get_proxies()
         if proxies:
             text = "🔌 **YOUR PROXIES**\n\n"
-            for i, p in enumerate(proxies[:30], 1):
+            for i, p in enumerate(proxies[:20], 1):
                 text += f"{i}. `{p}`\n"
-            if len(proxies) > 30:
-                text += f"\n... and {len(proxies) - 30} more"
         else:
-            text = "No proxies found. Add some!"
+            text = "No proxies found."
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=proxy_menu())
     
     elif data == "proxy_delete" and user_id in config.ADMIN_IDS:
-        await query.edit_message_text(
-            "🗑 **DELETE PROXY**\n\nSend the exact proxy string to delete.\n\nSend /cancel to cancel.",
-            parse_mode="Markdown",
-            reply_markup=proxy_menu()
-        )
+        await query.edit_message_text("🗑 Send the exact proxy string to delete:", reply_markup=proxy_menu())
         context.user_data['delete_proxy_mode'] = True
+    
+    elif data == "admin_broadcast" and user_id in config.ADMIN_IDS:
+        await query.edit_message_text("📢 Send the message to broadcast:", reply_markup=admin_panel_menu())
+        context.user_data['broadcast_mode'] = True
+    
+    elif data == "admin_ban" and user_id in config.ADMIN_IDS:
+        await query.edit_message_text("🚫 Send user ID to ban:", reply_markup=admin_panel_menu())
+        context.user_data['ban_mode'] = True
+    
+    elif data == "admin_unban" and user_id in config.ADMIN_IDS:
+        await query.edit_message_text("✅ Send user ID to unban:", reply_markup=admin_panel_menu())
+        context.user_data['unban_mode'] = True
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -304,10 +247,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Please upload a .txt file!", reply_markup=main_menu(user_id))
         return
     
-    if document.file_size > config.MAX_FILE_SIZE_MB * 1024 * 1024:
-        await update.message.reply_text(f"❌ File too large! Max {config.MAX_FILE_SIZE_MB}MB")
-        return
-    
     status_msg = await update.message.reply_text("📥 Downloading file...")
     
     file = await document.get_file()
@@ -322,7 +261,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             accounts.append((email.strip(), password.strip()))
     
     if not accounts:
-        await status_msg.edit_text("❌ No valid accounts found! Format: email:password")
+        await status_msg.edit_text("❌ No valid accounts found!")
         return
     
     await status_msg.edit_text(f"✅ Loaded {len(accounts)} accounts!\n\n🔄 Starting check...")
@@ -345,11 +284,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             percent = (current / total) * 100
             try:
                 await progress_msg.edit_text(
-                    f"🔄 **CHECKING PROGRESS**\n"
-                    f"├─ Processed: {current}/{total}\n"
-                    f"├─ Hits found: {len(hits)}\n"
-                    f"├─ Progress: {percent:.1f}%\n"
-                    f"└─ Valid premium: {len(hits)}",
+                    f"🔄 **PROGRESS**\n├─ Processed: {current}/{total}\n├─ Hits: {len(hits)}\n└─ {percent:.1f}%",
                     parse_mode="Markdown"
                 )
             except:
@@ -361,7 +296,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     db.update_stats(user_id, len(accounts), len(hits))
     db.add_log(user_id, document.file_name, len(accounts), len(hits))
-    
     context.user_data['waiting_for_file'] = False
     
     if hits:
@@ -373,36 +307,17 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             writer.writerow([hit['email'], hit['password'], hit['plan'], hit['country'], hit['renewal']])
         csv_buffer.seek(0)
         
-        result_text = f"""
-🎯 **CHECK COMPLETE!**
-
-📊 **SUMMARY:**
-├─ Total checked: {len(accounts)}
-├─ ✅ Valid premium: {len(hits)}
-└─ ❌ Invalid: {len(accounts) - len(hits)}
-
-🏆 **PREMIUM ACCOUNTS FOUND:**
-"""
-        for i, hit in enumerate(hits[:10], 1):
-            result_text += f"\n{i}. `{hit['email']}` | {hit['plan']} | {hit['country']}"
-        if len(hits) > 10:
-            result_text += f"\n\n... and {len(hits) - 10} more"
+        result_text = f"🎯 **COMPLETE!**\n\n✅ Valid premium: {len(hits)}\n❌ Invalid: {len(accounts) - len(hits)}"
         
         await progress_msg.delete()
         await update.message.reply_text(result_text, parse_mode="Markdown")
         await update.message.reply_document(
             document=io.BytesIO(csv_buffer.getvalue().encode('utf-8')),
             filename=f"crunchyroll_hits_{timestamp}.csv",
-            caption=f"✅ {len(hits)} premium accounts found!"
+            caption=f"✅ {len(hits)} premium accounts!"
         )
     else:
-        await progress_msg.edit_text(
-            f"❌ **NO PREMIUM ACCOUNTS FOUND!**\n\n"
-            f"📊 Total checked: {len(accounts)}\n"
-            f"💀 Valid premium: 0\n\n"
-            f"Try better combo lists or add proxies!",
-            parse_mode="Markdown"
-        )
+        await progress_msg.edit_text("❌ **NO PREMIUM ACCOUNTS FOUND!**", parse_mode="Markdown")
     
     await update.message.reply_text("Main Menu:", reply_markup=main_menu(user_id))
 
@@ -429,7 +344,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
         
-        await status_msg.edit_text(f"✅ Broadcast sent to {sent}/{len(users)} users!")
+        await status_msg.edit_text(f"✅ Sent to {sent}/{len(users)} users!")
         context.user_data.pop('broadcast_mode', None)
         await update.message.reply_text("Admin Panel:", reply_markup=admin_panel_menu())
         return
@@ -439,7 +354,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             target_id = int(text)
             db.ban_user(target_id)
-            await update.message.reply_text(f"✅ User {target_id} has been BANNED!")
+            await update.message.reply_text(f"✅ User {target_id} BANNED!")
         except:
             await update.message.reply_text("❌ Invalid user ID!")
         context.user_data.pop('ban_mode', None)
@@ -451,7 +366,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             target_id = int(text)
             db.unban_user(target_id)
-            await update.message.reply_text(f"✅ User {target_id} has been UNBANNED!")
+            await update.message.reply_text(f"✅ User {target_id} UNBANNED!")
         except:
             await update.message.reply_text("❌ Invalid user ID!")
         context.user_data.pop('unban_mode', None)
@@ -463,7 +378,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if db.add_proxy(text):
             await update.message.reply_text(f"✅ Proxy added: `{text}`", parse_mode="Markdown")
         else:
-            await update.message.reply_text("❌ Proxy already exists or invalid format!")
+            await update.message.reply_text("❌ Invalid or duplicate proxy!")
         context.user_data.pop('add_proxy_mode', None)
         await update.message.reply_text("Proxy Menu:", reply_markup=proxy_menu())
         return
@@ -479,24 +394,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Please use the BUTTONS below 👇", reply_markup=main_menu(user_id))
 
 async def main():
-    application = Application.builder().token(config.BOT_TOKEN).build()
-    
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_file))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.COMMAND, start))
-    
     print("🤖 Bot is starting...")
-    print(f"✅ Admins: {config.ADMIN_IDS}")
-    print(f"✅ Using public Crunchyroll credentials")
     
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
+    if not config.BOT_TOKEN:
+        print("❌ ERROR: BOT_TOKEN is not set!")
+        return
     
-    print("✅ Bot is running!")
+    app = Application.builder().token(config.BOT_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    
+    print("✅ Handlers added")
+    
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    print("✅ BOT IS RUNNING! Go to Telegram and send /start")
     
     await asyncio.Event().wait()
+
+# Add missing import for CommandHandler
+from telegram.ext import CommandHandler
 
 if __name__ == "__main__":
     asyncio.run(main())

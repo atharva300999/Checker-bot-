@@ -89,7 +89,6 @@ class CrunchyrollChecker:
                 access_token = token_data.get('access_token')
                 
                 if access_token:
-                    # Get account info
                     acc_url = "https://beta-api.crunchyroll.com/accounts/v1/me"
                     acc_headers = {'Authorization': f'Bearer {access_token}'}
                     acc_response = requests.get(acc_url, headers=acc_headers, 
@@ -102,7 +101,6 @@ class CrunchyrollChecker:
                         external_id = acc_info.get('external_id')
                         
                         if external_id:
-                            # Get subscription
                             sub_url = f"https://beta-api.crunchyroll.com/subs/v1/subscriptions/{external_id}"
                             sub_response = requests.get(sub_url, headers=acc_headers,
                                                        proxies=proxies_dict, timeout=config.CHECK_TIMEOUT)
@@ -118,9 +116,8 @@ class CrunchyrollChecker:
                                 result['success'] = False
                                 result['plan'] = 'Free'
                     else:
-                        # Account exists but can't get details
                         result['success'] = True
-                        result['plan'] = 'Premium (Unknown)'
+                        result['plan'] = 'Premium'
                         
             elif response.status_code == 401:
                 result['error'] = "Wrong password"
@@ -129,12 +126,8 @@ class CrunchyrollChecker:
             else:
                 result['error'] = f"HTTP {response.status_code}"
                 
-        except requests.exceptions.Timeout:
-            result['error'] = "Timeout"
-        except requests.exceptions.ConnectionError:
-            result['error'] = "Connection error"
         except Exception as e:
-            result['error'] = str(e)[:50]
+            result['error'] = "Connection error"
         
         return result
     

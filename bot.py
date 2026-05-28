@@ -29,6 +29,16 @@ print(f"👑 Admins: {config.ADMIN_IDS}")
 db = Database()
 os.makedirs("data/exports", exist_ok=True)
 
+# ============= HELPER FUNCTION =============
+def create_progress_bar(current, total, length=20):
+    """Create a text-based progress bar"""
+    if total == 0:
+        return "█" * length + " 0%"
+    percent = current / total
+    filled = int(length * percent)
+    bar = "█" * filled + "░" * (length - filled)
+    return f"`{bar}` {percent*100:.1f}%"
+
 # ============= KEYBOARD BUTTONS =============
 
 def main_menu(user_id):
@@ -360,15 +370,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except:
             pass
-    
-    def create_progress_bar(current, total, length=20):
-        """Create a text-based progress bar"""
-        if total == 0:
-            return "█" * length + " 0%"
-        percent = current / total
-        filled = int(length * percent)
-        bar = "█" * filled + "░" * (length - filled)
-        return f"`{bar}` {percent*100:.1f}%"
     
     checker.set_progress_callback(lambda c, t, r: asyncio.create_task(update_progress(c, t, r)))
     

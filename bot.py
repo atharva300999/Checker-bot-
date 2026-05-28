@@ -80,7 +80,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ├─ Multi-threaded account checking
 ├─ Proxy rotation support
 ├─ Live percentage updates
-├─ Full account info with each hit
 ├─ .txt export with email:pass
 ├─ Admin panel
 └─ 24/7 uptime
@@ -221,25 +220,93 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Upload .txt file!", reply_markup=main_menu(user_id))
         return
     
+    if document.file_size > config.MAX_FILE_SIZE_MB * 1024 * 1024:
+        await update.message.reply_text(f"❌ File too large! Max {config.MAX_FILE_SIZE_MB}MB")
+        return
+    
     status_msg = await update.message.reply_text("📥 Downloading file...")
     
     file = await document.get_file()
     file_content = await file.download_as_bytearray()
     lines = file_content.decode('utf-8', errors='ignore').split('\n')
     
+    # ========== FIXED: Better account parsing with validation ==========
     accounts = []
+    invalid_lines = 0
+    invalid_format_count = 0
+    no_email_count = 0
+    
     for line in lines:
         line = line.strip()
-        if line and ':' in line and not line.startswith('#'):
-            parts = line.split(':', 1)
-            accounts.append((parts[0].strip(), parts[1].strip()))
+        
+        # Skip empty lines
+        if not line:
+            continue
+        
+        # Skip header lines from combo maker
+        if line.startswith('╔') or line.startswith('║') or line.startswith('╚'):
+            continue
+        if line.startswith('Query') or line.startswith('Total') or line.startswith('Date'):
+            continue
+        if line.startswith('===') or line.startswith('Powered by'):
+            continue
+        if line.startswith('Info') or line.startswith('==================================================')
+            continue
+        
+        # Check if line has colon
+        if ':' not in line:
+            invalid_format_count += 1
+            continue
+        
+        # Split only on first colon
+        parts = line.split(':', 1)
+        if len(parts) != 2:
+            invalid_format_count += 1
+            continue
+        
+        email = parts[0].strip()
+        password = parts[1].strip()
+        
+        # Validate email format
+        if not email or '@' not in email:
+            no_email_count += 1
+            continue
+        
+        # Validate password not empty
+        if not password:
+            invalid_lines += 1
+            continue
+        
+        # Skip very short or invalid emails
+        if len(email) < 5 or len(password) < 1:
+            invalid_lines += 1
+            continue
+        
+        # Skip if email has spaces
+        if ' ' in email:
+            invalid_lines += 1
+            continue
+        
+        accounts.append((email, password))
+    
+    # ========== Show parsing results ==========
+    if invalid_lines > 0 or invalid_format_count > 0 or no_email_count > 0:
+        warning_msg = f"⚠️ **File Parsing Results:**\n"
+        warning_msg += f"✅ Valid accounts: {len(accounts)}\n"
+        if no_email_count > 0:
+            warning_msg += f"❌ Missing @ in email: {no_email_count}\n"
+        if invalid_format_count > 0:
+            warning_msg += f"❌ Invalid format (no colon): {invalid_format_count}\n"
+        if invalid_lines > 0:
+            warning_msg += f"❌ Other invalid: {invalid_lines}\n"
+        await update.message.reply_text(warning_msg, parse_mode="Markdown")
     
     if not accounts:
-        await status_msg.edit_text("❌ No valid accounts found!", reply_markup=main_menu(user_id))
+        await status_msg.edit_text("❌ No valid accounts found!\n\nMake sure format is: email:password (one per line)", reply_markup=main_menu(user_id))
         return
     
     total = len(accounts)
-    await status_msg.edit_text(f"✅ Loaded {total} accounts!\n\n🔄 Starting check...")
+    await status_msg.edit_text(f"✅ Loaded {total} valid accounts!\n\n🔄 Starting check...")
     
     proxies = db.get_proxies()
     checker = CrunchyrollChecker(
@@ -287,7 +354,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Update percentage
         percent = int((current / total_accounts) * 100)
         
-        if current % 10 == 0 or current == total_accounts:
+        # Update progress every 5 accounts or every 5%
+        if current % 5 == 0 or current == total_accounts or percent % 5 == 0:
             try:
                 await progress_msg.edit_text(
                     f"🔄 CHECKING IN PROGRESS\n\n"

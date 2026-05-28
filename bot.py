@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
 import io
-import csv
 import datetime
 import os
 import requests
@@ -81,7 +80,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ├─ Multi-threaded account checking
 ├─ Proxy rotation support
 ├─ Live percentage updates
-├─ CSV export with full details
+├─ Full account info with each hit
+├─ .txt export with email:pass
 ├─ Admin panel
 └─ 24/7 uptime
 
@@ -138,7 +138,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("No history found!", reply_markup=back_button())
     
     elif data == "help":
-        help_text = "❓ HOW TO USE\n\n1️⃣ Click CHECK CRUNCHYROLL\n2️⃣ Upload .txt file\n3️⃣ Watch percentage update\n4️⃣ Get premium accounts instantly\n5️⃣ Download CSV with all hits"
+        help_text = """❓ HOW TO USE
+
+1️⃣ Click CHECK CRUNCHYROLL
+2️⃣ Upload .txt file with email:password
+3️⃣ Watch percentage update
+4️⃣ Each premium account sent with:
+   • Email & Password
+   • Plan (Fan/Mega Fan/Ultimate Fan)
+   • Country
+   • Renewal Date
+5️⃣ Download .txt file with all hits
+
+Tip: Use 3-5 threads for best results"""
         await query.edit_message_text(help_text, parse_mode="Markdown", reply_markup=back_button())
     
     elif data == "support":
@@ -246,21 +258,33 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(update_progress_async(current, total_accounts, result))
     
     async def update_progress_async(current, total_accounts, result):
+        # If premium found, send FULL details immediately
         if result['success']:
             hits_list.append(result)
+            
+            # Format renewal date
+            renewal = result['renewal'] if result['renewal'] else 'N/A'
+            
+            # Send FULL account information
             hit_msg = f"""
-🎯 PREMIUM ACCOUNT FOUND!
+🎯 **PREMIUM ACCOUNT FOUND!** 🎯
 
-📧 {result['email']}
-🔑 {result['password']}
-💎 Plan: {result['plan']}
-🌍 Country: {result['country']}
-📅 Renewal: {result['renewal'] or 'N/A'}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-{result['email']}:{result['password']}
+📧 **Email:** `{result['email']}`
+🔑 **Password:** `{result['password']}`
+
+💎 **Plan:** `{result['plan']}`
+🌍 **Country:** `{result['country']}`
+📅 **Renewal Date:** `{renewal}`
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+`{result['email']}:{result['password']}`
 """
             await update.message.reply_text(hit_msg, parse_mode="Markdown")
         
+        # Update percentage
         percent = int((current / total_accounts) * 100)
         
         if current % 10 == 0 or current == total_accounts:
@@ -283,34 +307,47 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if hits:
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        csv_buffer = io.StringIO()
-        writer = csv.writer(csv_buffer)
-        writer.writerow(['Email', 'Password', 'Plan', 'Country', 'Renewal Date'])
+        
+        # Create .txt file with email:password format (one per line)
+        txt_content = ""
         for hit in hits:
-            writer.writerow([hit['email'], hit['password'], hit['plan'], hit['country'], hit['renewal']])
-        csv_buffer.seek(0)
+            txt_content += f"{hit['email']}:{hit['password']}\n"
+        
+        txt_buffer = io.BytesIO(txt_content.encode('utf-8'))
         
         final_msg = f"""
-🎯 CHECK COMPLETE!
+🎯 **CHECK COMPLETE!**
 
-📊 FINAL SUMMARY:
-├─ Total Checked: {total}
-├─ ✅ Premium Accounts: {len(hits)}
-├─ ❌ Free/Invalid: {total - len(hits)}
-└─ 📈 Hit Rate: {(len(hits)/total*100):.1f}%
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🏆 Premium accounts saved to CSV file below!
+📊 **FINAL SUMMARY:**
+
+├─ Total Checked: `{total}`
+├─ ✅ Premium Accounts: `{len(hits)}`
+├─ ❌ Free/Invalid: `{total - len(hits)}`
+└─ 📈 Hit Rate: `{(len(hits)/total*100):.1f}%`
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📁 **Download the .txt file below** with all premium accounts!
 """
         await progress_msg.delete()
         await update.message.reply_text(final_msg, parse_mode="Markdown")
+        
+        # Send .txt file
         await update.message.reply_document(
-            document=io.BytesIO(csv_buffer.getvalue().encode('utf-8')),
-            filename=f"crunchyroll_hits_{timestamp}.csv",
-            caption=f"✅ {len(hits)} premium accounts with full details!"
+            document=txt_buffer,
+            filename=f"crunchyroll_premium_hits_{timestamp}.txt",
+            caption=f"✅ {len(hits)} premium accounts | email:password format"
         )
     else:
         await progress_msg.edit_text(
-            f"❌ NO PREMIUM ACCOUNTS FOUND!\n\n📊 Total Checked: {total}",
+            f"❌ **NO PREMIUM ACCOUNTS FOUND!**\n\n"
+            f"📊 Total Checked: {total}\n\n"
+            f"💡 **Tips:**\n"
+            f"• Make sure accounts are premium\n"
+            f"• Try adding proxies\n"
+            f"• Reduce threads to 3",
             parse_mode="Markdown"
         )
     

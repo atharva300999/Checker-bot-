@@ -55,6 +55,8 @@ class CrunchyrollChecker:
             'active': False,
             'renewal': '',
             'country': 'Unknown',
+            'username': '',
+            'avatar': '',
             'error': ''
         }
         
@@ -115,10 +117,19 @@ class CrunchyrollChecker:
                         else:
                             result['plan'] = 'Premium'
                         
+                        # Extract username
+                        username_match = re.search(r'username[:\s]+([^\s<]+)', text)
+                        if username_match:
+                            result['username'] = username_match.group(1)
+                        
                         # Extract country
                         country_match = re.search(r'"country":"([^"]+)"', acc_response.text)
                         if country_match:
                             result['country'] = country_match.group(1).upper()
+                        else:
+                            country_match2 = re.search(r'country[:\s]+([A-Z]{2})', text)
+                            if country_match2:
+                                result['country'] = country_match2.group(1).upper()
                         
                         # Extract renewal date
                         date_patterns = [
@@ -133,11 +144,22 @@ class CrunchyrollChecker:
                                 result['renewal'] = date_match.group(1)
                                 break
                         
-                        # Try to get email verification from account page
-                        if 'verified' in text:
+                        # Extract account creation date
+                        created_match = re.search(r'member since[:\s]+(\d{4}-\d{2}-\d{2})', text)
+                        if created_match:
+                            result['created'] = created_match.group(1)
+                        
+                        # Check email verification
+                        if 'email verified' in text or 'verified' in text:
                             result['verified'] = True
                     else:
                         result['error'] = "Free account"
+                        
+                    # Always try to get username even for free accounts
+                    if not result['username']:
+                        username_match = re.search(r'display-name[:\s]+([^\s<]+)', text)
+                        if username_match:
+                            result['username'] = username_match.group(1)
                 else:
                     result['error'] = f"HTTP {acc_response.status_code}"
             else:
